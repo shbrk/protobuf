@@ -56,12 +56,14 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/golang/protobuf/proto"
-	"github.com/golang/protobuf/protoc-gen-go/generator/internal/remap"
+	"github.com/shbrk/protobuf/proto"
+	"github.com/shbrk/protobuf/protoc-gen-go/generator/internal/remap"
 
-	"github.com/golang/protobuf/protoc-gen-go/descriptor"
-	plugin "github.com/golang/protobuf/protoc-gen-go/plugin"
-)
+	"github.com/shbrk/protobuf/protoc-gen-go/descriptor"
+
+	plugin "github.com/shbrk/protobuf/protoc-gen-go/plugin"
+	"reflect"
+	)
 
 // generatedCodeVersion indicates a version of the generated code.
 // It is incremented whenever an incompatibility between the generated code and
@@ -987,6 +989,11 @@ func Annotate(file *FileDescriptor, path string, atoms ...interface{}) *Annotate
 	return &AnnotatedAtoms{source: *file.Name, path: path, atoms: atoms}
 }
 
+func GetTag(tag string, name string) string {
+	var st = reflect.StructTag(tag)
+	return st.Get(name)
+}
+
 // printAtom prints the (atomic, non-annotation) argument to the generated output.
 func (g *Generator) printAtom(v interface{}) {
 	switch v := v.(type) {
@@ -1302,7 +1309,7 @@ func (g *Generator) generateImports() {
 	// We almost always need a proto import.  Rather than computing when we
 	// do, which is tricky when there's a plugin, just import it and
 	// reference it later. The same argument applies to the fmt and math packages.
-	g.P("import "+g.Pkg["proto"]+" ", GoImportPath(g.ImportPrefix)+"github.com/golang/protobuf/proto")
+	g.P("import "+g.Pkg["proto"]+" ", GoImportPath(g.ImportPrefix)+"github.com/shbrk/protobuf/proto")
 	g.P("import " + g.Pkg["fmt"] + ` "fmt"`)
 	g.P("import " + g.Pkg["math"] + ` "math"`)
 	var (
@@ -1776,6 +1783,7 @@ type fieldCommon struct {
 	goName     string // Go name of field, e.g. "FieldName" or "Descriptor_"
 	protoName  string // Name of field in proto language, e.g. "field_name" or "descriptor"
 	getterName string // Name of the getter, e.g. "GetFieldName" or "GetDescriptor_"
+	setterName string // Name of the setter, e.g. "SetFieldName" or "SetDescriptor_"
 	goType     string // The Go type as a string, e.g. "*int32" or "*OtherMessage"
 	tags       string // The tag string/annotation for the type, e.g. `protobuf:"varint,8,opt,name=region_id,json=regionId"`
 	fullPath   string // The full path of the field as used by Annotate etc, e.g. "4,0,2,0"
@@ -1843,6 +1851,28 @@ func (f *simpleField) getter(g *Generator, mc *msgCtx) {
 // setter prints the setter method of the field.
 func (f *simpleField) setter(g *Generator, mc *msgCtx) {
 	// No setter for regular fields yet
+	//star := ""
+	tname := f.goType
+	if needsStar(f.protoType) && tname[0] == '*' {
+		tname = tname[1:]
+		//star = "*"
+	}
+	if f.deprecated != "" {
+		g.P(f.deprecated)
+	}
+	g.P("func (m *", mc.goName, ") ", Annotate(mc.message.file, f.fullPath, f.setterName), "(val "+tname+") {")
+
+	var tagStr = GetTag(f.fieldCommon.tags,"protobuf")
+	if tagStr != "" {
+		var tags = strings.Split(tagStr,",")
+		g.P("if m.XXX_dirty == nil {")
+		g.P("m.XXX_dirty = make(map[uint]bool)")
+		g.P("}")
+		g.P("m.XXX_dirty["+tags[1]+"] = true")
+	}
+	g.P( "m." + f.goName + " = val")
+	g.P("}")
+	g.P()
 }
 
 // getProtoDef returns the default value explicitly stated in the proto file, e.g "yoshi" or "5".
@@ -2250,6 +2280,15 @@ func (g *Generator) generateInternalStructFields(mc *msgCtx, topLevelFields []to
 	g.P("XXX_unrecognized\t[]byte `json:\"-\"`")
 	g.P("XXX_sizecache\tint32 `json:\"-\"`")
 
+	var partial = ""
+	if c, ok := g.makeComments(mc.message.path); ok {
+		var begin = strings.Index(c,"[")
+		var end = strings.Index(c,"]")
+		if begin != -1 && end != -1 && begin < end{
+			partial += " partial:\"" + string([]byte(c)[begin+1:end])+"\""
+		}
+	}
+	g.P("XXX_dirty\tmap[uint]bool `json:\"-\""+partial+"`")
 }
 
 // generateOneofFuncs adds all the utility functions for oneof, including marshalling, unmarshalling and sizer.
@@ -2429,11 +2468,26 @@ func (g *Generator) generateCommonMethods(mc *msgCtx) {
 	g.P("}")
 
 	g.P("func (m *", mc.goName, ") XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {")
+	g.P("defer m.XXX_CleanDirty()")
 	g.P("return xxx_messageInfo_", mc.goName, ".Marshal(b, m, deterministic)")
+	g.P("}")
+
+	g.P("func (m *", mc.goName, ") XXX_MarshalDirty(b []byte, dirty map[uint]bool, deterministic bool) ([]byte, error) {")
+	g.P("defer m.XXX_CleanDirty()")
+	g.P("return xxx_messageInfo_", mc.goName, ".MarshalDirty(b, m, m.XXX_dirty, deterministic)")
+	g.P("}")
+
+	g.P("func (m *", mc.goName, ") XXX_MarshalPartial(b []byte, deterministic bool) ([]byte, error) {")
+	g.P("defer m.XXX_CleanDirty()")
+	g.P("return xxx_messageInfo_", mc.goName, ".MarshalPartial(b, m, deterministic)")
 	g.P("}")
 
 	g.P("func (dst *", mc.goName, ") XXX_Merge(src ", g.Pkg["proto"], ".Message) {")
 	g.P("xxx_messageInfo_", mc.goName, ".Merge(dst, src)")
+	g.P("}")
+
+	g.P("func (m *", mc.goName, ") XXX_CleanDirty() {") // avoid name clash with "Size" field in some message
+	g.P("m.XXX_dirty = nil")
 	g.P("}")
 
 	g.P("func (m *", mc.goName, ") XXX_Size() int {") // avoid name clash with "Size" field in some message
@@ -2493,8 +2547,8 @@ func (g *Generator) generateMessage(message *Descriptor) {
 		// in the proto file, meaning that a change in the field
 		// ordering can change generated Method/Field names.
 		base := CamelCase(*field.Name)
-		ns := allocNames(base, "Get"+base)
-		fieldName, fieldGetterName := ns[0], ns[1]
+		ns := allocNames(base, "Get"+base, "Set"+base)
+		fieldName, fieldGetterName, fieldSetterName := ns[0], ns[1], ns[2]
 		typename, wiretype := g.GoType(message, field)
 		jsonName := *field.Name
 		tag := fmt.Sprintf("protobuf:%s json:%q", g.goTag(message, field, wiretype), jsonName+",omitempty")
@@ -2503,8 +2557,8 @@ func (g *Generator) generateMessage(message *Descriptor) {
 		if oneof && oFields[*field.OneofIndex] == nil {
 			odp := message.OneofDecl[int(*field.OneofIndex)]
 			base := CamelCase(odp.GetName())
-			names := allocNames(base, "Get"+base)
-			fname, gname := names[0], names[1]
+			names := allocNames(base, "Get"+base, "Set"+base)
+			fname, gname, sname := names[0], names[1],names[2]
 
 			// This is the first field of a oneof we haven't seen before.
 			// Generate the union field.
@@ -2523,6 +2577,7 @@ func (g *Generator) generateMessage(message *Descriptor) {
 				fieldCommon: fieldCommon{
 					goName:     fname,
 					getterName: gname,
+					setterName: sname,
 					goType:     dname,
 					tags:       tag,
 					protoName:  odp.GetName(),
@@ -2596,6 +2651,7 @@ func (g *Generator) generateMessage(message *Descriptor) {
 				fieldCommon: fieldCommon{
 					goName:     fieldName,
 					getterName: fieldGetterName,
+					setterName: fieldSetterName,
 					goType:     typename,
 					tags:       tag,
 					protoName:  field.GetName(),
@@ -2627,6 +2683,7 @@ func (g *Generator) generateMessage(message *Descriptor) {
 			fieldCommon: fieldCommon{
 				goName:     fieldName,
 				getterName: fieldGetterName,
+				setterName: fieldSetterName,
 				goType:     typename,
 				tags:       tag,
 				protoName:  field.GetName(),

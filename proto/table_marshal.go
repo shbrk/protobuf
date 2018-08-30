@@ -56,6 +56,7 @@ type marshaler func(b []byte, ptr pointer, wiretag uint64, deterministic bool) (
 type marshalInfo struct {
 	typ          reflect.Type
 	fields       []*marshalFieldInfo
+	partial      map[uint]bool              // static dirty flag
 	unrecognized field                      // offset of XXX_unrecognized
 	extensions   field                      // offset of XXX_InternalExtensions
 	v1extensions field                      // offset of XXX_extensions
@@ -137,8 +138,46 @@ func (a *InternalMessageInfo) Marshal(b []byte, msg Message, deterministic bool)
 		// catch it. We don't want crash in this case.
 		return b, ErrNil
 	}
-	return u.marshal(b, ptr, deterministic)
+	return u.marshal(b, ptr, nil, deterministic)
 }
+
+// Marshal is the entry point from generated code,
+// and should be ONLY called by generated code.
+// It marshals msg to the end of b.
+// a is a pointer to a place to store cached marshal info.
+func (a *InternalMessageInfo) MarshalDirty(b []byte, msg Message, dirty map[uint]bool, deterministic bool) ([]byte, error) {
+	u := getMessageMarshalInfo(msg, a)
+	ptr := toPointer(&msg)
+	if ptr.isNil() {
+		// We get here if msg is a typed nil ((*SomeMessage)(nil)),
+		// so it satisfies the interface, and msg == nil wouldn't
+		// catch it. We don't want crash in this case.
+		return b, ErrNil
+	}
+	if dirty == nil {
+		dirty = make(map[uint]bool)
+	}
+	return u.marshal(b, ptr, dirty,deterministic)
+}
+
+
+// Marshal is the entry point from generated code,
+// and should be ONLY called by generated code.
+// It marshals msg to the end of b.
+// a is a pointer to a place to store cached marshal info.
+func (a *InternalMessageInfo) MarshalPartial(b []byte, msg Message, deterministic bool) ([]byte, error) {
+	u := getMessageMarshalInfo(msg, a)
+	ptr := toPointer(&msg)
+	if ptr.isNil() {
+		// We get here if msg is a typed nil ((*SomeMessage)(nil)),
+		// so it satisfies the interface, and msg == nil wouldn't
+		// catch it. We don't want crash in this case.
+		return b, ErrNil
+	}
+	return u.marshal(b, ptr, u.partial, deterministic)
+}
+
+
 
 func getMessageMarshalInfo(msg interface{}, a *InternalMessageInfo) *marshalInfo {
 	// u := a.marshal, but atomically.
@@ -217,7 +256,7 @@ func (u *marshalInfo) cachedsize(ptr pointer) int {
 // the encoded data to the end of the slice, returns the slice and error (if any).
 // ptr is the pointer to the message.
 // If deterministic is true, map is marshaled in deterministic order.
-func (u *marshalInfo) marshal(b []byte, ptr pointer, deterministic bool) ([]byte, error) {
+func (u *marshalInfo) marshal(b []byte, ptr pointer, partial map[uint]bool, deterministic bool) ([]byte, error) {
 	if atomic.LoadInt32(&u.initialized) == 0 {
 		u.computeMarshalInfo()
 	}
@@ -266,6 +305,14 @@ func (u *marshalInfo) marshal(b []byte, ptr pointer, deterministic bool) ([]byte
 			// nil pointer always marshals to nothing
 			continue
 		}
+
+		var index = uint(f.wiretag >> 3)
+		if partial != nil && !partial[index] {
+			// partial flag
+			continue
+		}
+
+
 		b, err = f.marshaler(b, ptr.offset(f.field), f.wiretag, deterministic)
 		if err != nil {
 			if err1, ok := err.(*RequiredNotSetError); ok {
@@ -295,6 +342,8 @@ func (u *marshalInfo) marshal(b []byte, ptr pointer, deterministic bool) ([]byte
 	}
 	return b, errLater
 }
+
+
 
 // computeMarshalInfo initializes the marshal info.
 func (u *marshalInfo) computeMarshalInfo() {
@@ -344,6 +393,19 @@ func (u *marshalInfo) computeMarshalInfo() {
 			u.v1extensions = toField(&f)
 		case "XXX_NoUnkeyedLiteral":
 			// nothing to do
+		case "XXX_dirty":
+			var dirty = f.Tag.Get("partial")
+			if dirty != "" {
+				u.partial = make(map[uint]bool)
+				var list = strings.Split(dirty, ",")
+				for _, v := range list {
+					var index, err = strconv.Atoi(v)
+					if err != nil {
+						panic(err)
+					}
+					u.partial[uint(index)] = true
+				}
+			}
 		default:
 			panic("unknown XXX field: " + f.Name)
 		}
@@ -515,7 +577,7 @@ func (fi *marshalFieldInfo) setMarshaler(f *reflect.StructField, tags []string) 
 	case reflect.Ptr, reflect.Slice:
 		fi.isPointer = true
 	}
-	fi.sizer, fi.marshaler = typeMarshaler(f.Type, tags, true, false)
+	fi.sizer, fi.marshaler = typeMarshaler(f.Type, tags, false, false)
 }
 
 // typeMarshaler returns the sizer and marshaler of a given field.
@@ -2161,7 +2223,7 @@ func makeGroupMarshaler(u *marshalInfo) (sizer, marshaler) {
 			}
 			var err error
 			b = appendVarint(b, wiretag) // start group
-			b, err = u.marshal(b, p, deterministic)
+			b, err = u.marshal(b, p, nil,deterministic)
 			b = appendVarint(b, wiretag+(WireEndGroup-WireStartGroup)) // end group
 			return b, err
 		}
@@ -2190,7 +2252,7 @@ func makeGroupSliceMarshaler(u *marshalInfo) (sizer, marshaler) {
 					return b, errRepeatedHasNil
 				}
 				b = appendVarint(b, wiretag) // start group
-				b, err = u.marshal(b, v, deterministic)
+				b, err = u.marshal(b, v, nil,deterministic)
 				b = appendVarint(b, wiretag+(WireEndGroup-WireStartGroup)) // end group
 				if !nerr.Merge(err) {
 					if err == ErrNil {
@@ -2222,7 +2284,7 @@ func makeMessageMarshaler(u *marshalInfo) (sizer, marshaler) {
 			b = appendVarint(b, wiretag)
 			siz := u.cachedsize(p)
 			b = appendVarint(b, uint64(siz))
-			return u.marshal(b, p, deterministic)
+			return u.marshal(b, p, nil,deterministic)
 		}
 }
 
@@ -2252,7 +2314,7 @@ func makeMessageSliceMarshaler(u *marshalInfo) (sizer, marshaler) {
 				b = appendVarint(b, wiretag)
 				siz := u.cachedsize(v)
 				b = appendVarint(b, uint64(siz))
-				b, err = u.marshal(b, v, deterministic)
+				b, err = u.marshal(b, v, nil, deterministic)
 
 				if !nerr.Merge(err) {
 					if err == ErrNil {
@@ -2674,6 +2736,8 @@ func (u *marshalInfo) appendV1Extensions(b []byte, m map[int32]Extension, determ
 type newMarshaler interface {
 	XXX_Size() int
 	XXX_Marshal(b []byte, deterministic bool) ([]byte, error)
+	XXX_MarshalDirty(b []byte, deterministic bool) ([]byte, error)
+	XXX_MarshalPartial(b []byte, deterministic bool) ([]byte, error)
 }
 
 // Size returns the encoded size of a protocol buffer message.
@@ -2704,6 +2768,54 @@ func Marshal(pb Message) ([]byte, error) {
 		siz := m.XXX_Size()
 		b := make([]byte, 0, siz)
 		return m.XXX_Marshal(b, false)
+	}
+	if m, ok := pb.(Marshaler); ok {
+		// If the message can marshal itself, let it do it, for compatibility.
+		// NOTE: This is not efficient.
+		return m.Marshal()
+	}
+	// in case somehow we didn't generate the wrapper
+	if pb == nil {
+		return nil, ErrNil
+	}
+	var info InternalMessageInfo
+	siz := info.Size(pb)
+	b := make([]byte, 0, siz)
+	return info.Marshal(b, pb, false)
+}
+
+// Marshal takes a protocol buffer message
+// and encodes its dirty fields into the wire format, returning the data.
+// This is the main entry point.
+func MarshalDirty(pb Message) ([]byte, error) {
+	if m, ok := pb.(newMarshaler); ok {
+		siz := m.XXX_Size()
+		b := make([]byte, 0, siz)
+		return m.XXX_MarshalDirty(b,false)
+	}
+	if m, ok := pb.(Marshaler); ok {
+		// If the message can marshal itself, let it do it, for compatibility.
+		// NOTE: This is not efficient.
+		return m.Marshal()
+	}
+	// in case somehow we didn't generate the wrapper
+	if pb == nil {
+		return nil, ErrNil
+	}
+	var info InternalMessageInfo
+	siz := info.Size(pb)
+	b := make([]byte, 0, siz)
+	return info.Marshal(b, pb, false)
+}
+
+// Marshal takes a protocol buffer message partial
+// and encodes its static partial fields into the wire format, returning the data.
+// This is the main entry point.
+func MarshalPartial(pb Message) ([]byte, error) {
+	if m, ok := pb.(newMarshaler); ok {
+		siz := m.XXX_Size()
+		b := make([]byte, 0, siz)
+		return m.XXX_MarshalPartial(b, false)
 	}
 	if m, ok := pb.(Marshaler); ok {
 		// If the message can marshal itself, let it do it, for compatibility.

@@ -315,7 +315,7 @@ func (u *unmarshalInfo) computeUnmarshalInfo() {
 			u.oldExtensions = toField(&f)
 			continue
 		}
-		if f.Name == "XXX_NoUnkeyedLiteral" || f.Name == "XXX_sizecache" {
+		if f.Name == "XXX_NoUnkeyedLiteral" || f.Name == "XXX_sizecache" || f.Name == "XXX_dirty" {
 			continue
 		}
 

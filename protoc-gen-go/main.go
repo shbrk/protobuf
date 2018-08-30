@@ -52,9 +52,9 @@ import (
 	"io/ioutil"
 	"os"
 
-	"github.com/golang/protobuf/proto"
-	"github.com/golang/protobuf/protoc-gen-go/generator"
-)
+	"github.com/shbrk/protobuf/proto"
+	"github.com/shbrk/protobuf/protoc-gen-go/generator"
+	)
 
 func main() {
 	// Begin by allocating a generator. The request and response structures are stored there
@@ -62,6 +62,7 @@ func main() {
 	// report failure.
 	g := generator.New()
 
+	//data, err := ioutil.ReadFile("E:/GoWorkSpace/src/input.bin")
 	data, err := ioutil.ReadAll(os.Stdin)
 	if err != nil {
 		g.Error(err, "reading input")
@@ -70,6 +71,8 @@ func main() {
 	if err := proto.Unmarshal(data, g.Request); err != nil {
 		g.Error(err, "parsing input proto")
 	}
+
+	//ioutil.WriteFile("./input.bin",data,os.ModePerm)
 
 	if len(g.Request.FileToGenerate) == 0 {
 		g.Fail("no files to generate")
