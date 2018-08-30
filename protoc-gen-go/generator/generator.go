@@ -2472,7 +2472,7 @@ func (g *Generator) generateCommonMethods(mc *msgCtx) {
 	g.P("return xxx_messageInfo_", mc.goName, ".Marshal(b, m, deterministic)")
 	g.P("}")
 
-	g.P("func (m *", mc.goName, ") XXX_MarshalDirty(b []byte, dirty map[uint]bool, deterministic bool) ([]byte, error) {")
+	g.P("func (m *", mc.goName, ") XXX_MarshalDirty(b []byte, deterministic bool) ([]byte, error) {")
 	g.P("defer m.XXX_CleanDirty()")
 	g.P("return xxx_messageInfo_", mc.goName, ".MarshalDirty(b, m, m.XXX_dirty, deterministic)")
 	g.P("}")
