@@ -301,10 +301,6 @@ func (u *marshalInfo) marshal(b []byte, ptr pointer, partial map[uint]bool, dete
 				continue
 			}
 		}
-		if f.isPointer && ptr.offset(f.field).getPointer().isNil() {
-			// nil pointer always marshals to nothing
-			continue
-		}
 
 		var index = uint(f.wiretag >> 3)
 		if partial != nil && !partial[index] {
@@ -312,8 +308,15 @@ func (u *marshalInfo) marshal(b []byte, ptr pointer, partial map[uint]bool, dete
 			continue
 		}
 
+		if f.isPointer && ptr.offset(f.field).getPointer().isNil() {
+			// nil ptr always encode wiretag and len
+			b = appendVarint(b, f.wiretag)
+			b = appendVarint(b, uint64(0))
+			continue
+		}
 
-		b, err = f.marshaler(b, ptr.offset(f.field), f.wiretag, deterministic)
+		nb, err := f.marshaler(b, ptr.offset(f.field), f.wiretag, deterministic)
+
 		if err != nil {
 			if err1, ok := err.(*RequiredNotSetError); ok {
 				// Required field in submessage is not set.
@@ -335,7 +338,16 @@ func (u *marshalInfo) marshal(b []byte, ptr pointer, partial map[uint]bool, dete
 			}
 			return b, err
 		}
+
+		if len(nb) == len(b) {
+			// always encode at least wiretag
+			b = appendVarint(b, f.wiretag)
+			b = appendVarint(b, uint64(0))
+		} else {
+			b = nb
+		}
 	}
+
 	if u.unrecognized.IsValid() {
 		s := *ptr.offset(u.unrecognized).toBytes()
 		b = append(b, s...)
