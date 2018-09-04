@@ -2280,15 +2280,15 @@ func (g *Generator) generateInternalStructFields(mc *msgCtx, topLevelFields []to
 	g.P("XXX_unrecognized\t[]byte `json:\"-\"`")
 	g.P("XXX_sizecache\tint32 `json:\"-\"`")
 
-	var partial = ""
+	var fixed = ""
 	if c, ok := g.makeComments(mc.message.path); ok {
 		var begin = strings.Index(c,"[")
 		var end = strings.Index(c,"]")
 		if begin != -1 && end != -1 && begin < end{
-			partial += " partial:\"" + string([]byte(c)[begin+1:end])+"\""
+			fixed += " fixed:\"" + string([]byte(c)[begin+1:end])+"\""
 		}
 	}
-	g.P("XXX_dirty\tmap[uint]bool `json:\"-\""+partial+"`")
+	g.P("XXX_dirty\tmap[uint]bool `json:\"-\""+fixed+"`")
 }
 
 // generateOneofFuncs adds all the utility functions for oneof, including marshalling, unmarshalling and sizer.
@@ -2468,7 +2468,6 @@ func (g *Generator) generateCommonMethods(mc *msgCtx) {
 	g.P("}")
 
 	g.P("func (m *", mc.goName, ") XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {")
-	g.P("defer m.XXX_CleanDirty()")
 	g.P("return xxx_messageInfo_", mc.goName, ".Marshal(b, m, deterministic)")
 	g.P("}")
 
@@ -2477,9 +2476,8 @@ func (g *Generator) generateCommonMethods(mc *msgCtx) {
 	g.P("return xxx_messageInfo_", mc.goName, ".MarshalDirty(b, m, m.XXX_dirty, deterministic)")
 	g.P("}")
 
-	g.P("func (m *", mc.goName, ") XXX_MarshalPartial(b []byte, deterministic bool) ([]byte, error) {")
-	g.P("defer m.XXX_CleanDirty()")
-	g.P("return xxx_messageInfo_", mc.goName, ".MarshalPartial(b, m, deterministic)")
+	g.P("func (m *", mc.goName, ") XXX_MarshalFixed(b []byte, deterministic bool) ([]byte, error) {")
+	g.P("return xxx_messageInfo_", mc.goName, ".MarshalFixed(b, m, deterministic)")
 	g.P("}")
 
 	g.P("func (dst *", mc.goName, ") XXX_Merge(src ", g.Pkg["proto"], ".Message) {")

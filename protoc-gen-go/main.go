@@ -49,12 +49,13 @@
 package main
 
 import (
-	"io/ioutil"
-	"os"
+		"os"
 
 	"github.com/shbrk/protobuf/proto"
+	gpb "github.com/golang/protobuf/proto"
 	"github.com/shbrk/protobuf/protoc-gen-go/generator"
-	)
+	"io/ioutil"
+)
 
 func main() {
 	// Begin by allocating a generator. The request and response structures are stored there
@@ -90,7 +91,7 @@ func main() {
 	g.GenerateAllFiles()
 
 	// Send back the results.
-	data, err = proto.Marshal(g.Response)
+	data, err = gpb.Marshal(g.Response)
 	if err != nil {
 		g.Error(err, "failed to marshal output proto")
 	}

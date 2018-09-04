@@ -56,7 +56,7 @@ type marshaler func(b []byte, ptr pointer, wiretag uint64, deterministic bool) (
 type marshalInfo struct {
 	typ          reflect.Type
 	fields       []*marshalFieldInfo
-	partial      map[uint]bool              // static dirty flag
+	fixed        map[uint]bool              // fixed field flag
 	unrecognized field                      // offset of XXX_unrecognized
 	extensions   field                      // offset of XXX_InternalExtensions
 	v1extensions field                      // offset of XXX_extensions
@@ -165,7 +165,7 @@ func (a *InternalMessageInfo) MarshalDirty(b []byte, msg Message, dirty map[uint
 // and should be ONLY called by generated code.
 // It marshals msg to the end of b.
 // a is a pointer to a place to store cached marshal info.
-func (a *InternalMessageInfo) MarshalPartial(b []byte, msg Message, deterministic bool) ([]byte, error) {
+func (a *InternalMessageInfo) MarshalFixed(b []byte, msg Message, deterministic bool) ([]byte, error) {
 	u := getMessageMarshalInfo(msg, a)
 	ptr := toPointer(&msg)
 	if ptr.isNil() {
@@ -174,7 +174,7 @@ func (a *InternalMessageInfo) MarshalPartial(b []byte, msg Message, deterministi
 		// catch it. We don't want crash in this case.
 		return b, ErrNil
 	}
-	return u.marshal(b, ptr, u.partial, deterministic)
+	return u.marshal(b, ptr, u.fixed, deterministic)
 }
 
 
@@ -406,16 +406,16 @@ func (u *marshalInfo) computeMarshalInfo() {
 		case "XXX_NoUnkeyedLiteral":
 			// nothing to do
 		case "XXX_dirty":
-			var dirty = f.Tag.Get("partial")
+			var dirty = f.Tag.Get("fixed")
 			if dirty != "" {
-				u.partial = make(map[uint]bool)
+				u.fixed = make(map[uint]bool)
 				var list = strings.Split(dirty, ",")
 				for _, v := range list {
 					var index, err = strconv.Atoi(v)
 					if err != nil {
 						panic(err)
 					}
-					u.partial[uint(index)] = true
+					u.fixed[uint(index)] = true
 				}
 			}
 		default:
@@ -2749,7 +2749,7 @@ type newMarshaler interface {
 	XXX_Size() int
 	XXX_Marshal(b []byte, deterministic bool) ([]byte, error)
 	XXX_MarshalDirty(b []byte, deterministic bool) ([]byte, error)
-	XXX_MarshalPartial(b []byte, deterministic bool) ([]byte, error)
+	XXX_MarshalFixed(b []byte, deterministic bool) ([]byte, error)
 }
 
 // Size returns the encoded size of a protocol buffer message.
@@ -2827,7 +2827,7 @@ func MarshalPartial(pb Message) ([]byte, error) {
 	if m, ok := pb.(newMarshaler); ok {
 		siz := m.XXX_Size()
 		b := make([]byte, 0, siz)
-		return m.XXX_MarshalPartial(b, false)
+		return m.XXX_MarshalFixed(b, false)
 	}
 	if m, ok := pb.(Marshaler); ok {
 		// If the message can marshal itself, let it do it, for compatibility.
