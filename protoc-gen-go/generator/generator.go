@@ -1866,7 +1866,7 @@ func (f *simpleField) setter(g *Generator, mc *msgCtx) {
 	if tagStr != "" {
 		var tags = strings.Split(tagStr,",")
 		g.P("if m.XXX_dirty == nil {")
-		g.P("m.XXX_dirty = make(map[uint]bool)")
+		g.P("m.XXX_dirty = make(map[uint64]bool)")
 		g.P("}")
 		g.P("m.XXX_dirty["+tags[1]+"] = true")
 	}
@@ -2288,7 +2288,7 @@ func (g *Generator) generateInternalStructFields(mc *msgCtx, topLevelFields []to
 			fixed += " fixed:\"" + string([]byte(c)[begin+1:end])+"\""
 		}
 	}
-	g.P("XXX_dirty\tmap[uint]bool `json:\"-\""+fixed+"`")
+	g.P("XXX_dirty\tmap[uint64]bool `json:\"-\""+fixed+"`")
 }
 
 // generateOneofFuncs adds all the utility functions for oneof, including marshalling, unmarshalling and sizer.
@@ -2490,6 +2490,14 @@ func (g *Generator) generateCommonMethods(mc *msgCtx) {
 
 	g.P("func (m *", mc.goName, ") XXX_Size() int {") // avoid name clash with "Size" field in some message
 	g.P("return xxx_messageInfo_", mc.goName, ".Size(m)")
+	g.P("}")
+
+	g.P("func (m *", mc.goName, ") XXX_SizeDirty() int {") // avoid name clash with "Size" field in some message
+	g.P("return xxx_messageInfo_", mc.goName, ".SizeDirty(m, m.XXX_dirty)")
+	g.P("}")
+
+	g.P("func (m *", mc.goName, ") XXX_SizeFixed() int {") // avoid name clash with "Size" field in some message
+	g.P("return xxx_messageInfo_", mc.goName, ".SizeFixed(m)")
 	g.P("}")
 
 	g.P("func (m *", mc.goName, ") XXX_DiscardUnknown() {")

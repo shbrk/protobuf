@@ -80,6 +80,7 @@ type unmarshalInfo struct {
 	oldExtensions   field                         // offset of old-form extensions field (of type map[int]Extension)
 	extensionRanges []ExtensionRange              // if non-nil, implies extensions field is valid
 	isMessageSet    bool                          // if true, implies extensions field is valid
+	defaultMsg      pointer                       // default msg body ptr
 }
 
 // An unmarshaler takes a stream of bytes and a pointer to a field of a message.
@@ -99,6 +100,8 @@ type unmarshalFieldInfo struct {
 	reqMask uint64
 
 	name string // name of the field, for error reporting
+
+	fieldType reflect.Type
 }
 
 var (
@@ -169,6 +172,15 @@ func (u *unmarshalInfo) unmarshal(m pointer, b []byte) error {
 			f = u.sparse[tag]
 		}
 		if fn := f.unmarshal; fn != nil {
+			if wire == WireDefault {
+				var p = m.offset(f.field)
+				var d = u.defaultMsg.offset(f.field)
+				if !m.isNil(){
+					p.asPointerTo(f.fieldType).Elem().Set(d.asPointerTo(f.fieldType).Elem())
+				}
+				continue
+			}
+
 			var err error
 			b, err = fn(b, m.offset(f.field), wire)
 			if err == nil {
@@ -278,6 +290,7 @@ func (u *unmarshalInfo) computeUnmarshalInfo() {
 	u.unrecognized = invalidField
 	u.extensions = invalidField
 	u.oldExtensions = invalidField
+	u.defaultMsg = valToPointer(reflect.New(t))
 
 	// List of the generated type and offset for each oneof field.
 	type oneofField struct {
@@ -358,7 +371,7 @@ func (u *unmarshalInfo) computeUnmarshalInfo() {
 		}
 
 		// Store the info in the correct slot in the message.
-		u.setTag(tag, toField(&f), unmarshal, reqMask, name)
+		u.setTag(tag, toField(&f), unmarshal, reqMask, name,f.Type)
 	}
 
 	// Find any types associated with oneof fields.
@@ -394,7 +407,7 @@ func (u *unmarshalInfo) computeUnmarshalInfo() {
 					// That lets us know where this struct should be stored
 					// when we encounter it during unmarshaling.
 					unmarshal := makeUnmarshalOneof(typ, of.ityp, baseUnmarshal)
-					u.setTag(fieldNum, of.field, unmarshal, 0, name)
+					u.setTag(fieldNum, of.field, unmarshal, 0, name,f.Type)
 				}
 			}
 		}
@@ -415,7 +428,7 @@ func (u *unmarshalInfo) computeUnmarshalInfo() {
 	// [0 0] is [tag=0/wiretype=varint varint-encoded-0].
 	u.setTag(0, zeroField, func(b []byte, f pointer, w int) ([]byte, error) {
 		return nil, fmt.Errorf("proto: %s: illegal tag 0 (wire type %d)", t, w)
-	}, 0, "")
+	}, 0, "",nil)
 
 	// Set mask for required field check.
 	u.reqMask = uint64(1)<<uint(len(u.reqFields)) - 1
@@ -428,8 +441,8 @@ func (u *unmarshalInfo) computeUnmarshalInfo() {
 // field/unmarshal = unmarshal info for that field.
 // reqMask = if required, bitmask for field position in required field list. 0 otherwise.
 // name = short name of the field.
-func (u *unmarshalInfo) setTag(tag int, field field, unmarshal unmarshaler, reqMask uint64, name string) {
-	i := unmarshalFieldInfo{field: field, unmarshal: unmarshal, reqMask: reqMask, name: name}
+func (u *unmarshalInfo) setTag(tag int, field field, unmarshal unmarshaler, reqMask uint64, name string, fieldType reflect.Type) {
+	i := unmarshalFieldInfo{field: field, unmarshal: unmarshal, reqMask: reqMask, name: name, fieldType:fieldType}
 	n := u.typ.NumField()
 	if tag >= 0 && (tag < 16 || tag < 2*n) { // TODO: what are the right numbers here?
 		for len(u.dense) <= tag {
@@ -694,9 +707,6 @@ func unmarshalInt64Slice(b []byte, f pointer, w int) ([]byte, error) {
 		}
 		res := b[x:]
 		b = b[:x]
-		if x == 0 {
-			return res,nil
-		}
 		for len(b) > 0 {
 			x, n = decodeVarint(b)
 			if n == 0 {
@@ -763,9 +773,6 @@ func unmarshalSint64Slice(b []byte, f pointer, w int) ([]byte, error) {
 		}
 		res := b[x:]
 		b = b[:x]
-		if x == 0 {
-			return res,nil
-		}
 		for len(b) > 0 {
 			x, n = decodeVarint(b)
 			if n == 0 {
@@ -832,9 +839,6 @@ func unmarshalUint64Slice(b []byte, f pointer, w int) ([]byte, error) {
 		}
 		res := b[x:]
 		b = b[:x]
-		if x == 0 {
-			return res,nil
-		}
 		for len(b) > 0 {
 			x, n = decodeVarint(b)
 			if n == 0 {
@@ -901,9 +905,6 @@ func unmarshalInt32Slice(b []byte, f pointer, w int) ([]byte, error) {
 		}
 		res := b[x:]
 		b = b[:x]
-		if x == 0 {
-			return res,nil
-		}
 		for len(b) > 0 {
 			x, n = decodeVarint(b)
 			if n == 0 {
@@ -968,9 +969,6 @@ func unmarshalSint32Slice(b []byte, f pointer, w int) ([]byte, error) {
 		}
 		res := b[x:]
 		b = b[:x]
-		if x == 0 {
-			return res,nil
-		}
 		for len(b) > 0 {
 			x, n = decodeVarint(b)
 			if n == 0 {
@@ -1035,9 +1033,6 @@ func unmarshalUint32Slice(b []byte, f pointer, w int) ([]byte, error) {
 		}
 		res := b[x:]
 		b = b[:x]
-		if x == 0 {
-			return res,nil
-		}
 		for len(b) > 0 {
 			x, n = decodeVarint(b)
 			if n == 0 {
@@ -1100,9 +1095,6 @@ func unmarshalFixed64Slice(b []byte, f pointer, w int) ([]byte, error) {
 		}
 		res := b[x:]
 		b = b[:x]
-		if x == 0 {
-			return res,nil
-		}
 		for len(b) > 0 {
 			if len(b) < 8 {
 				return nil, io.ErrUnexpectedEOF
@@ -1162,9 +1154,6 @@ func unmarshalFixedS64Slice(b []byte, f pointer, w int) ([]byte, error) {
 		}
 		res := b[x:]
 		b = b[:x]
-		if x == 0 {
-			return res,nil
-		}
 		for len(b) > 0 {
 			if len(b) < 8 {
 				return nil, io.ErrUnexpectedEOF
@@ -1224,9 +1213,6 @@ func unmarshalFixed32Slice(b []byte, f pointer, w int) ([]byte, error) {
 		}
 		res := b[x:]
 		b = b[:x]
-		if x == 0 {
-			return res,nil
-		}
 		for len(b) > 0 {
 			if len(b) < 4 {
 				return nil, io.ErrUnexpectedEOF
@@ -1286,9 +1272,6 @@ func unmarshalFixedS32Slice(b []byte, f pointer, w int) ([]byte, error) {
 		}
 		res := b[x:]
 		b = b[:x]
-		if x == 0 {
-			return res,nil
-		}
 		for len(b) > 0 {
 			if len(b) < 4 {
 				return nil, io.ErrUnexpectedEOF
@@ -1352,9 +1335,6 @@ func unmarshalBoolSlice(b []byte, f pointer, w int) ([]byte, error) {
 		}
 		res := b[x:]
 		b = b[:x]
-		if x == 0 {
-			return res,nil
-		}
 		for len(b) > 0 {
 			x, n = decodeVarint(b)
 			if n == 0 {
@@ -1416,9 +1396,6 @@ func unmarshalFloat64Slice(b []byte, f pointer, w int) ([]byte, error) {
 		}
 		res := b[x:]
 		b = b[:x]
-		if x == 0 {
-			return res,nil
-		}
 		for len(b) > 0 {
 			if len(b) < 8 {
 				return nil, io.ErrUnexpectedEOF
@@ -1478,9 +1455,6 @@ func unmarshalFloat32Slice(b []byte, f pointer, w int) ([]byte, error) {
 		}
 		res := b[x:]
 		b = b[:x]
-		if x == 0 {
-			return res,nil
-		}
 		for len(b) > 0 {
 			if len(b) < 4 {
 				return nil, io.ErrUnexpectedEOF
@@ -1550,9 +1524,6 @@ func unmarshalStringSlice(b []byte, f pointer, w int) ([]byte, error) {
 	if x > uint64(len(b)) {
 		return nil, io.ErrUnexpectedEOF
 	}
-	if x == 0 {
-		return b,nil
-	}
 	v := string(b[:x])
 	s := f.toStringSlice()
 	*s = append(*s, v)
@@ -1611,9 +1582,6 @@ func unmarshalUTF8StringSlice(b []byte, f pointer, w int) ([]byte, error) {
 	if x > uint64(len(b)) {
 		return nil, io.ErrUnexpectedEOF
 	}
-	if x == 0 {
-		return b,nil
-	}
 	v := string(b[:x])
 	s := f.toStringSlice()
 	*s = append(*s, v)
@@ -1637,9 +1605,6 @@ func unmarshalBytesValue(b []byte, f pointer, w int) ([]byte, error) {
 	if x > uint64(len(b)) {
 		return nil, io.ErrUnexpectedEOF
 	}
-	if x == 0 {
-		return b,nil
-	}
 	// The use of append here is a trick which avoids the zeroing
 	// that would be required if we used a make/copy pair.
 	// We append to emptyBuf instead of nil because we want
@@ -1661,9 +1626,6 @@ func unmarshalBytesSlice(b []byte, f pointer, w int) ([]byte, error) {
 	if x > uint64(len(b)) {
 		return nil, io.ErrUnexpectedEOF
 	}
-	if x == 0 {
-		return b[x:],nil
-	}
 	v := append(emptyBuf[:], b[:x]...)
 	s := f.toBytesSlice()
 	*s = append(*s, v)
@@ -1682,9 +1644,6 @@ func makeUnmarshalMessagePtr(sub *unmarshalInfo, name string) unmarshaler {
 		b = b[n:]
 		if x > uint64(len(b)) {
 			return nil, io.ErrUnexpectedEOF
-		}
-		if x == 0 {
-			return b,nil
 		}
 		// First read the message field to see if something is there.
 		// The semantics of multiple submessages are weird.  Instead of
@@ -1719,9 +1678,6 @@ func makeUnmarshalMessageSlicePtr(sub *unmarshalInfo, name string) unmarshaler {
 		b = b[n:]
 		if x > uint64(len(b)) {
 			return nil, io.ErrUnexpectedEOF
-		}
-		if x == 0 {
-			return b,nil
 		}
 		v := valToPointer(reflect.New(sub.typ))
 		err := sub.unmarshal(v, b[:x])
@@ -1807,10 +1763,6 @@ func makeUnmarshalMap(f *reflect.StructField) unmarshaler {
 		}
 		r := b[x:] // unused data to return
 		b = b[:x]  // data for map entry
-		// empty map
-		if x == 0 {
-			return r,nil
-		}
 
 		// Note: we could use #keys * #values ~= 200 functions
 		// to do map decoding without reflection. Probably not worth it.

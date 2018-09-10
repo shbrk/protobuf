@@ -56,6 +56,7 @@ const (
 	WireStartGroup = 3
 	WireEndGroup   = 4
 	WireFixed32    = 5
+	WireDefault    = 7
 )
 
 // tagMap is an optimization over map[int]int for typical protocol buffer
