@@ -80,7 +80,6 @@ type unmarshalInfo struct {
 	oldExtensions   field                         // offset of old-form extensions field (of type map[int]Extension)
 	extensionRanges []ExtensionRange              // if non-nil, implies extensions field is valid
 	isMessageSet    bool                          // if true, implies extensions field is valid
-	defaultMsg      pointer                       // default msg body ptr
 }
 
 // An unmarshaler takes a stream of bytes and a pointer to a field of a message.
@@ -143,6 +142,7 @@ func (u *unmarshalInfo) unmarshal(m pointer, b []byte) error {
 	}
 	var reqMask uint64 // bitmask of required fields we've seen.
 	var errLater error
+	var hasClear FlagSetter
 	for len(b) > 0 {
 		// Read tag and wire type.
 		// Special case 1 and 2 byte varints.
@@ -171,16 +171,18 @@ func (u *unmarshalInfo) unmarshal(m pointer, b []byte) error {
 		} else {
 			f = u.sparse[tag]
 		}
+
 		if fn := f.unmarshal; fn != nil {
-			if wire == WireDefault {
-				var p = m.offset(f.field)
-				var d = u.defaultMsg.offset(f.field)
-				if !m.isNil(){
-					p.asPointerTo(f.fieldType).Elem().Set(d.asPointerTo(f.fieldType).Elem())
-				}
-				continue
+			var p = m.offset(f.field)
+			if !p.isNil() && !hasClear.GetFlag(uint32(tag)) {
+				//p.asPointerTo(f.fieldType).Elem().Set(d.asPointerTo(f.fieldType).Elem())
+				p.asPointerTo(f.fieldType).Elem().Set(reflect.Zero(f.fieldType))
+				hasClear.SetFlag(uint32(tag))
 			}
 
+			if wire == WireDefault {
+				continue
+			}
 			var err error
 			b, err = fn(b, m.offset(f.field), wire)
 			if err == nil {
@@ -290,7 +292,6 @@ func (u *unmarshalInfo) computeUnmarshalInfo() {
 	u.unrecognized = invalidField
 	u.extensions = invalidField
 	u.oldExtensions = invalidField
-	u.defaultMsg = valToPointer(reflect.New(t))
 
 	// List of the generated type and offset for each oneof field.
 	type oneofField struct {

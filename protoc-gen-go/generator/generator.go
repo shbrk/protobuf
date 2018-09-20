@@ -1865,10 +1865,7 @@ func (f *simpleField) setter(g *Generator, mc *msgCtx) {
 	var tagStr = GetTag(f.fieldCommon.tags,"protobuf")
 	if tagStr != "" {
 		var tags = strings.Split(tagStr,",")
-		g.P("if m.XXX_dirty == nil {")
-		g.P("m.XXX_dirty = make(map[uint64]bool)")
-		g.P("}")
-		g.P("m.XXX_dirty["+tags[1]+"] = true")
+		g.P("m.XXX_dirty.SetFlag("+tags[1]+")")
 	}
 	g.P( "m." + f.goName + " = val")
 	g.P("}")
@@ -2288,7 +2285,7 @@ func (g *Generator) generateInternalStructFields(mc *msgCtx, topLevelFields []to
 			fixed += " fixed:\"" + string([]byte(c)[begin+1:end])+"\""
 		}
 	}
-	g.P("XXX_dirty\tmap[uint64]bool `json:\"-\""+fixed+"`")
+	g.P("XXX_dirty\tproto.FlagSetter `json:\"-\""+fixed+"`")
 }
 
 // generateOneofFuncs adds all the utility functions for oneof, including marshalling, unmarshalling and sizer.
@@ -2473,7 +2470,7 @@ func (g *Generator) generateCommonMethods(mc *msgCtx) {
 
 	g.P("func (m *", mc.goName, ") XXX_MarshalDirty(b []byte, deterministic bool) ([]byte, error) {")
 	g.P("defer m.XXX_CleanDirty()")
-	g.P("return xxx_messageInfo_", mc.goName, ".MarshalDirty(b, m, m.XXX_dirty, deterministic)")
+	g.P("return xxx_messageInfo_", mc.goName, ".MarshalDirty(b, m, &m.XXX_dirty, deterministic)")
 	g.P("}")
 
 	g.P("func (m *", mc.goName, ") XXX_MarshalFixed(b []byte, deterministic bool) ([]byte, error) {")
@@ -2485,7 +2482,7 @@ func (g *Generator) generateCommonMethods(mc *msgCtx) {
 	g.P("}")
 
 	g.P("func (m *", mc.goName, ") XXX_CleanDirty() {") // avoid name clash with "Size" field in some message
-	g.P("m.XXX_dirty = nil")
+	g.P("m.XXX_dirty.Clear()")
 	g.P("}")
 
 	g.P("func (m *", mc.goName, ") XXX_Size() int {") // avoid name clash with "Size" field in some message
@@ -2493,7 +2490,7 @@ func (g *Generator) generateCommonMethods(mc *msgCtx) {
 	g.P("}")
 
 	g.P("func (m *", mc.goName, ") XXX_SizeDirty() int {") // avoid name clash with "Size" field in some message
-	g.P("return xxx_messageInfo_", mc.goName, ".SizeDirty(m, m.XXX_dirty)")
+	g.P("return xxx_messageInfo_", mc.goName, ".SizeDirty(m, &m.XXX_dirty)")
 	g.P("}")
 
 	g.P("func (m *", mc.goName, ") XXX_SizeFixed() int {") // avoid name clash with "Size" field in some message

@@ -44,6 +44,39 @@ import (
 	"unicode/utf8"
 )
 
+
+type FlagSetter struct {
+	flag uint64
+	flagSet map[uint32]bool
+}
+
+func(f *FlagSetter) SetFlag(field uint32){
+	if field < 64 {
+		f.flag = f.flag | (1 << field)
+	} else {
+		if f.flagSet == nil {
+			f.flagSet = make(map[uint32]bool)
+		}
+		f.flagSet[field] = true
+	}
+}
+
+func(f *FlagSetter) GetFlag(field uint32) bool {
+	if field < 64 {
+		return (f.flag & (1 << field) )> 0
+	} else {
+		return f.flagSet[field]
+	}
+}
+
+func(f *FlagSetter) Clear(){
+	f.flag = 0
+	f.flagSet = make(map[uint32]bool)
+}
+
+
+
+
 // a sizer takes a pointer to a field and the size of its tag, computes the size of
 // the encoded data.
 type sizer func(pointer, int) int
@@ -56,7 +89,7 @@ type marshaler func(b []byte, ptr pointer, wiretag uint64, deterministic bool) (
 type marshalInfo struct {
 	typ          reflect.Type
 	fields       []*marshalFieldInfo
-	fixed        map[uint64]bool              // fixed field flag
+	fixed        *FlagSetter              // fixed field flag
 	unrecognized field                      // offset of XXX_unrecognized
 	extensions   field                      // offset of XXX_InternalExtensions
 	v1extensions field                      // offset of XXX_extensions
@@ -125,7 +158,7 @@ func (a *InternalMessageInfo) Size(msg Message) int {
 	return u.size(ptr,nil)
 }
 
-func (a *InternalMessageInfo) SizeDirty(msg Message,dirty map[uint64]bool) int {
+func (a *InternalMessageInfo) SizeDirty(msg Message,dirty *FlagSetter) int {
 	u := getMessageMarshalInfo(msg, a)
 	ptr := toPointer(&msg)
 	if ptr.isNil() {
@@ -170,7 +203,7 @@ func (a *InternalMessageInfo) Marshal(b []byte, msg Message, deterministic bool)
 // and should be ONLY called by generated code.
 // It marshals msg to the end of b.
 // a is a pointer to a place to store cached marshal info.
-func (a *InternalMessageInfo) MarshalDirty(b []byte, msg Message, dirty map[uint64]bool, deterministic bool) ([]byte, error) {
+func (a *InternalMessageInfo) MarshalDirty(b []byte, msg Message, dirty *FlagSetter, deterministic bool) ([]byte, error) {
 	u := getMessageMarshalInfo(msg, a)
 	ptr := toPointer(&msg)
 	if ptr.isNil() {
@@ -179,9 +212,7 @@ func (a *InternalMessageInfo) MarshalDirty(b []byte, msg Message, dirty map[uint
 		// catch it. We don't want crash in this case.
 		return b, ErrNil
 	}
-	if dirty == nil {
-		dirty = make(map[uint64]bool)
-	}
+
 	return u.marshal(b, ptr, dirty,deterministic)
 }
 
@@ -224,7 +255,7 @@ func getMessageMarshalInfo(msg interface{}, a *InternalMessageInfo) *marshalInfo
 
 // size is the main function to compute the size of the encoded data of a message.
 // ptr is the pointer to the message.
-func (u *marshalInfo) size(ptr pointer,partial map[uint64]bool) int {
+func (u *marshalInfo) size(ptr pointer,partial *FlagSetter) int {
 	if atomic.LoadInt32(&u.initialized) == 0 {
 		u.computeMarshalInfo()
 	}
@@ -239,9 +270,9 @@ func (u *marshalInfo) size(ptr pointer,partial map[uint64]bool) int {
 
 	n := 0
 	for _, f := range u.fields {
-		var index = uint64(f.wiretag >> 3)
+		var index = f.wiretag >> 3
 		var defaultTag = index << 3 + WireDefault
-		if partial != nil && !partial[index] {
+		if partial != nil && !partial.GetFlag(uint32(index)) {
 			continue
 		}
 		if f.isPointer && ptr.offset(f.field).getPointer().isNil() {
@@ -291,7 +322,7 @@ func (u *marshalInfo) cachedsize(ptr pointer) int {
 // the encoded data to the end of the slice, returns the slice and error (if any).
 // ptr is the pointer to the message.
 // If deterministic is true, map is marshaled in deterministic order.
-func (u *marshalInfo) marshal(b []byte, ptr pointer, partial map[uint64]bool, deterministic bool) ([]byte, error) {
+func (u *marshalInfo) marshal(b []byte, ptr pointer, partial *FlagSetter, deterministic bool) ([]byte, error) {
 	if atomic.LoadInt32(&u.initialized) == 0 {
 		u.computeMarshalInfo()
 	}
@@ -337,9 +368,9 @@ func (u *marshalInfo) marshal(b []byte, ptr pointer, partial map[uint64]bool, de
 			}
 		}
 
-		var index = uint64(f.wiretag >> 3)
+		var index = f.wiretag >> 3
 		var defaultTag = index << 3 + WireDefault
-		if partial != nil && !partial[index] {
+		if partial != nil && !partial.GetFlag(uint32(index)) {
 			// partial flag
 			continue
 		}
@@ -442,14 +473,14 @@ func (u *marshalInfo) computeMarshalInfo() {
 		case "XXX_dirty":
 			var dirty = f.Tag.Get("fixed")
 			if dirty != "" {
-				u.fixed = make(map[uint64]bool)
+				u.fixed = &FlagSetter{}
 				var list = strings.Split(dirty, ",")
 				for _, v := range list {
-					var index, err = strconv.ParseUint(v, 10, 64)
+					var index, err = strconv.ParseUint(v, 10, 32)
 					if err != nil {
 						panic(err)
 					}
-					u.fixed[index] = true
+					u.fixed.SetFlag(uint32(index))
 				}
 			}
 		default:
