@@ -49,10 +49,8 @@
 package main
 
 import (
-		"os"
-
+	"os"
 	"github.com/shbrk/protobuf/proto"
-	gpb "github.com/golang/protobuf/proto"
 	"github.com/shbrk/protobuf/protoc-gen-go/generator"
 	"io/ioutil"
 )
@@ -91,7 +89,7 @@ func main() {
 	g.GenerateAllFiles()
 
 	// Send back the results.
-	data, err = gpb.Marshal(g.Response)
+	data, err = proto.Marshal(g.Response)
 	if err != nil {
 		g.Error(err, "failed to marshal output proto")
 	}
