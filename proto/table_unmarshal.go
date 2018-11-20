@@ -174,7 +174,7 @@ func (u *unmarshalInfo) unmarshal(m pointer, b []byte) error {
 
 		if fn := f.unmarshal; fn != nil {
 			var p = m.offset(f.field)
-			if !p.isNil() && !hasClear.GetFlag(uint32(tag)) {
+			if !p.isNil() && f.fieldType != nil && !hasClear.GetFlag(uint32(tag)) {
 				//p.asPointerTo(f.fieldType).Elem().Set(d.asPointerTo(f.fieldType).Elem())
 				p.asPointerTo(f.fieldType).Elem().Set(reflect.Zero(f.fieldType))
 				hasClear.SetFlag(uint32(tag))
